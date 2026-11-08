@@ -1,0 +1,84 @@
+Lab 10. Add Your Own System Call: trace
+Ion Morosanu, FAF-242
+
+xv6 tree: ~/xv6-riscv at upstream commit fa2ddcb (5 Nov 2026), run with make qemu CPUS=1
+(the VM has 2 virtual CPUs). The full report with the screenshots is Lab10_IonMorosanu_FAF-242.docx.
+
+This folder holds every file of the xv6 tree that the lab changes, at the same paths:
+  kernel/syscall.h   SYS_trace 23
+  kernel/syscall.c   extern sys_trace, [SYS_trace] in the table, the syscallnames table, the print after the call
+  kernel/sysproc.c   sys_trace(), stores argument 0 in myproc()->trace_mask
+  kernel/proc.h      int trace_mask in struct proc
+  kernel/proc.c      np->trace_mask = p->trace_mask in kfork() (line 291)
+  user/user.h        int trace(int);
+  user/usys.pl       entry("trace");
+  user/trace.c       the trace program
+  Makefile           the current xv6 Makefile plus $U/_trace\ after $U/_zombie\
+  trace.patch        the same changes as one diff against fa2ddcb (git apply trace.patch)
+Copied into a fresh clone of xv6, these files build without errors, and trace.patch applies to a clean tree.
+In the current tree the kernel function for fork is called kfork(); the line goes right after its safestrcpy.
+
+Check 1 (Part 1 only, no kernel side yet):
+$ trace 32 grep hello README
+3 trace: unknown sys call 23
+trace: failed
+
+Check 2 (Part 2 done):
+$ trace 32 grep hello README
+3: syscall read -> 1023
+3: syscall read -> 965
+3: syscall read -> 453
+3: syscall read -> 0
+
+Part 3:
+$ trace 2147483647 grep hello README
+4: syscall trace -> 0
+4: syscall exec -> 3
+4: syscall open -> 3
+4: syscall read -> 1023
+4: syscall read -> 965
+4: syscall read -> 453
+4: syscall read -> 0
+4: syscall close -> 0
+$ trace 65536 echo hi
+hi5: syscall write -> 2
+
+5: syscall write -> 1
+$ trace 2129920 grep hello README
+6: syscall open -> 3
+6: syscall close -> 0
+$ trace 2 usertests forkforkfork
+usertests starting
+test forkforkfork: 7: syscall fork -> 8
+8: syscall fork -> 9
+9: syscall fork -> 10
+9: syscall fork -> 11
+...
+19: syscall fork -> 67
+19: syscall fork -> 68
+19: syscall fork -> -1
+OK
+ALL TESTS PASSED
+
+Answers
+
+1. The mask 32 is 2^5, so only bit 5 is on, and 5 is SYS_read. The kernel prints a call only when
+   (p->trace_mask >> num) & 1 is 1. For open (15) and close (21) that bit is 0, so they run but are not printed.
+   With all the bits on (2147483647) grep shows them too: open -> 3 and close -> 0, plus trace and exec.
+
+2. np->trace_mask = p->trace_mask; in kfork() (kernel/proc.c). Without it a child would not get the mask of its
+   parent (its field keeps whatever its slot of the process table held, 0 for a slot never used), so the children
+   would print nothing. With it the children and the children of the children inherit the mask of trace.
+   In my run not three but thirteen processes printed lines (pids 7 to 19). 7 is usertests itself, which forks
+   8 to run the test; 8 forks 9 and then sleeps for two seconds; 9 forks in a loop, and every child it creates
+   runs the same loop, so the children fork as well. Which of them get to fork before the table is full depends
+   on the scheduler: on one CPU many of them got a turn, in the handout's run three did. Pid 19 got the last free
+   slot (68) and then -1, because all 64 slots of the process table (NPROC) were in use. After that failure the
+   test creates the file stopforking, every looping process sees it and exits, and the test passes.
+
+3. echo calls write twice: once for the word "hi" (2 bytes) and once for the "\n" at the end (1 byte), as the two
+   lines show. The kernel prints the trace line as soon as the first write returns, before echo makes the second
+   one. Both go to the same console, so the line lands between "hi" and the newline.
+
+4. open is 15 and close is 21, so the mask is 2^15 + 2^21 = 32768 + 2097152 = 2129920. trace 2129920 grep hello README
+   printed only open -> 3 and close -> 0.
