@@ -1,0 +1,46 @@
+Lab 18. Build a User-Level Thread Switch (xv6)
+Ion Morosanu, FAF-242
+
+xv6 tree: ~/xv6-riscv at upstream commit fa2ddcb (5 Nov 2026), run with make qemu CPUS=1
+(the VM has 2 virtual CPUs). No kernel change. The full report with the screenshots is
+Lab18_IonMorosanu_FAF-242.docx.
+
+This folder holds every file of the xv6 tree that the lab changes, at the same paths:
+  user/uthread.c          the thread library and the three threads (the three open places of the skeleton filled)
+  user/uthread_switch.S   thread_switch: sd ra, sp, s0..s11 to 0(a0)..104(a0), ld them from a1, ret
+  Makefile                the current xv6 Makefile plus $U/_uthread\ after $U/_zombie\ and the
+                          $U/_uthread rule at the end of the file
+  uthread.patch           the same changes as one diff against fa2ddcb (git apply uthread.patch)
+Made on a clean clone of fa2ddcb: the build ends with exit 0 and uthread prints the output below.
+
+$ uthread
+thread_a started
+thread_b started
+thread_c started
+thread_c 0
+thread_a 0
+thread_b 0
+thread_c 1
+...
+thread_c 99
+thread_a 99
+thread_b 99
+thread_c: exit after 100
+thread_a: exit after 100
+thread_b: exit after 100
+thread_schedule: no runnable threads
+(307 lines begin with thread_: 3 starts, 300 counting lines, 3 exits, the last scheduler line)
+
+Observe
+thread_switch saves and loads the callee-saved registers, exactly the fields of struct context:
+ra, sp and s0..s11 (14 registers, 112 bytes). It stores them from the CPU into the context of the
+old thread (a0) and loads them from the context of the new thread (a1). The other registers
+(a0..a7, t0..t6) are not kept, because thread_switch is called like a normal C function: the
+caller already saves on its stack what it needs after the call.
+ra makes the execution go on in the other thread because ret is a jump to the address in ra.
+After the new ra is loaded, ret goes where that thread stopped (right after its call to
+thread_switch inside thread_schedule), or, for a thread that never ran, to its function, because
+thread_create wrote the function address in ra. sp is loaded together with ra, so the code runs
+on the stack of the new thread.
+
+Not run: bash os2026-setup.sh --check (the tree was already built and used in the earlier labs).
