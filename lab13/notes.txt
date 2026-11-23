@@ -1,0 +1,63 @@
+Lab 13. Semaphores in Your Own Kernel (xv6)
+Ion Morosanu, FAF-242
+
+xv6 tree: ~/xv6-riscv at upstream commit fa2ddcb (5 Nov 2026), run with make qemu CPUS=1
+(the VM has 2 virtual CPUs). The full report with the screenshots is Lab13_IonMorosanu_FAF-242.docx.
+
+This folder holds every file of the xv6 tree that the lab changes, at the same paths:
+  kernel/sem.c       NEW: table of 8 semaphores, sys_sem_init, sys_sem_down, sys_sem_up
+  kernel/syscall.h   SYS_sem_init 24, SYS_sem_down 25, SYS_sem_up 26 (after SYS_sync 22)
+  kernel/syscall.c   extern sys_sem_*, three entries in the table
+  user/user.h        int sem_init(int, int); int sem_down(int); int sem_up(int);
+  user/usys.pl       entry("sem_init"); entry("sem_down"); entry("sem_up");
+  user/semtest.c     the two tests (order, ping-pong)
+  user/mix.c         two processes, one letter per write(), optional lock (semaphore 3)
+  Makefile           the current xv6 Makefile plus $K/sem.o after $K/sysproc.o, and
+                     $U/_semtest\ and $U/_mix\ after $U/_zombie\
+  sem.patch          the same changes as one diff against fa2ddcb (git apply sem.patch)
+Made on a clean clone of fa2ddcb (without trace from Lab 10): the kernel builds without errors,
+semtest prints semtest: OK and mix lock prints whole lines.
+
+Check 1 (Part 1 only, no kernel side yet):
+$ semtest
+3 semtest: unknown sys call 24
+4 semtest: unknown sys call 25
+child: I ran after the parent
+parent: done, I let the child go
+(then ping and pong mixed with more unknown sys call 25 and 26 lines, and semtest: OK)
+
+Check 2 (Part 2 done):
+$ semtest
+parent: done, I let the child go
+child: I ran after the parent
+ping 1
+  pong 1
+ping 2
+  pong 2
+ping 3
+  pong 3
+semtest: OK
+
+Part 3 (one CPU): mix without the lock cut one line in the first run (AAAA, then a whole line of b,
+the other 26 A later) and did not mix in the second run. mix lock printed 5 whole lines of A and
+5 whole lines of b. With CPUS=2 xv6 did not run usably in this VM (only AAA after a minute), so
+CPUS=1 was used.
+
+Observe
+1. One letter is one write() system call, so one line costs 31 system calls (30 letters and the
+   newline). Between two of them the process can be stopped (timer interrupt on one CPU, or the
+   other process runs on another CPU) and the other process prints its letters in the middle of
+   the line. Nothing keeps the 31 calls together.
+2. The lines sem_down(3); before the loop with write() and sem_up(3); after it, in lines() of
+   mix.c (both under if (uselock)). The loop between them is the critical section.
+3. wakeup(s) wakes all the processes that sleep on the address of s. If two were waiting and
+   sem_up made the value 1, both wake up, the first one that takes the lock decreases the value
+   to 0, and the second finds 0 and must sleep again. With if it would go on and make the value
+   -1, and two processes would be inside where only one may be.
+4. sem_up needs the same spinlock to increase the value, so nobody could ever call it and the
+   sleeper would wait for ever (on a CPU with interrupts off). Also sched() panics with
+   "sched locks" if the process holds a spinlock other than its own p->lock. sleep_prepare(s)
+   is called before the release, so a sem_up that comes before sleep() is not lost: sleep()
+   sees the address was already woken and returns at once.
+
+Not done (optional, not graded): sem_trydown (number 27).
